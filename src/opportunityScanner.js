@@ -3,6 +3,7 @@ const config = require('./config');
 const { log, withErrorHandling } = require('./utils');
 const { getVolatileTokens } = require('./tokenManager');
 const aggregatorService = require('./aggregatorService');
+const dexService = require('./dexService');
 const { calculateNetProfit, isProfitable, simulateTransaction, estimateGasCost } = require('./profitCalculator');
 
 
@@ -35,6 +36,9 @@ async function findBestQuotes(path, amountIn) {
         aggregatorService.get1inchQuote(from, to, amountIn),
         aggregatorService.getOdosQuote(from, to, amountIn),
         aggregatorService.getCowQuote(from, to, amountIn),
+        dexService.getUniswapQuote(from, to, amountIn),
+        dexService.getAerodromeQuote(from, to, amountIn),
+        dexService.getPancakeSwapQuote(from, to, amountIn),
     ]);
     return quotes.filter(q => q); // Filter out any failed quotes
 }
@@ -99,6 +103,29 @@ async function evaluateOpportunity(quote, hub) {
         // It uses a different off-chain signing mechanism (EIP-712) rather than a simple transaction.
         // A full implementation would require a separate flow to create and sign a CoW Swap order.
         return null;
+    } else if (quote.dex === 'uniswap') {
+        swapData = await dexService.getUniswapSwapData(
+            quote.fromToken.address,
+            quote.toToken.address,
+            quote.fromTokenAmount,
+            quote.toTokenAmount, // amountOutMinimum
+            quote.fee
+        );
+    } else if (quote.dex === 'aerodrome') {
+        swapData = await dexService.getAerodromeSwapData(
+            quote.fromToken.address,
+            quote.toToken.address,
+            quote.fromTokenAmount,
+            quote.toTokenAmount // amountOutMinimum
+        );
+    } else if (quote.dex === 'pancakeswap') {
+        swapData = await dexService.getPancakeSwapSwapData(
+            quote.fromToken.address,
+            quote.toToken.address,
+            quote.fromTokenAmount,
+            quote.toTokenAmount, // amountOutMinimum
+            quote.fee
+        );
     }
 
     if (!swapData) {
