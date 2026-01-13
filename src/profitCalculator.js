@@ -2,7 +2,7 @@ const { ethers } = require('ethers');
 const config = require('./config');
 const { log, withErrorHandling } = require('./utils');
 const { isHighConviction } = require('./zScoreEngine');
-const { loadBalancer } = require('./provider');
+const provider = require('./provider');
 
 const AAVE_PREMIUM = 0.0009; // Aave V3 flash loan premium is 0.09%
 
@@ -63,10 +63,10 @@ async function isProfitable(netProfit, pair) {
 async function simulateTransaction(contractAddress, calldata) {
     log('Simulating transaction off-chain...');
     try {
-        await loadBalancer.makeRequest('eth_call', [{
+        await provider.call({
             to: contractAddress,
             data: calldata,
-        }, 'latest']);
+        });
         log('Transaction simulation successful.');
         return true;
     } catch (error) {
@@ -81,13 +81,11 @@ async function simulateTransaction(contractAddress, calldata) {
  *p- * @returns {Promise<BigInt>} The estimated gas cost in the native token.
  */
 async function estimateGasCost(tx) {
-    const [gasLimitHex, gasPriceHex] = await Promise.all([
-        loadBalancer.makeRequest('eth_estimateGas', [tx]),
-        loadBalancer.makeRequest('eth_gasPrice', [])
+    const [gasLimit, feeData] = await Promise.all([
+        provider.estimateGas(tx),
+        provider.getFeeData()
     ]);
-    const gasLimit = BigInt(gasLimitHex);
-    const gasPrice = BigInt(gasPriceHex);
-    return gasLimit * gasPrice;
+    return gasLimit * feeData.gasPrice;
 }
 
 

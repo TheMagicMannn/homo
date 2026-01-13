@@ -1,8 +1,14 @@
-const LoadBalancer = require('./utils/loadBalancer');
+const { ethers } = require('ethers');
 const config = require('./config');
 
-const loadBalancer = new LoadBalancer(config.rpcUrls);
+// Create a configuration for each provider, specifying a priority and stallTimeout.
+// This allows the FallbackProvider to intelligently switch between nodes.
+const providerConfigs = config.rpcUrls.map((url, index) => ({
+  provider: new ethers.JsonRpcProvider(url),
+  priority: index,
+  stallTimeout: 1500, // ms
+}));
 
-module.exports = {
-    loadBalancer,
-};
+const provider = new ethers.FallbackProvider(providerConfigs);
+
+module.exports = provider;

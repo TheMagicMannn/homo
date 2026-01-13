@@ -1,7 +1,7 @@
 const { ethers } = require('ethers');
 const config = require('./config');
 const { log, withErrorHandling } = require('./utils');
-const { loadBalancer } = require('./provider');
+const provider = require('./provider');
 
 const UNISWAP_V3_ROUTER = "0x198EF79F1F515F02dFE9e3115eD9fC07183f02fC";
 const UNISWAP_V3_QUOTER = "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"; // Universal Quoter
@@ -18,8 +18,6 @@ const UNISWAP_V3_QUOTER_ABI = [
 const UNISWAP_V3_ROUTER_ABI = [
     "function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) external payable returns (uint256 amountOut)"
 ];
-
-const provider = loadBalancer.getNextProvider();
 
 const uniswapV3Quoter = new ethers.Contract(UNISWAP_V3_QUOTER, UNISWAP_V3_QUOTER_ABI, provider);
 const AERODROME_ROUTER_ABI = [

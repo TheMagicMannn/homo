@@ -1,11 +1,11 @@
 const { ethers } = require('ethers');
 const { AaveV3Base } = require('@bgd-labs/aave-address-book');
-const { loadBalancer } = require('./provider');
+const provider = require('./provider');
 const { withErrorHandling } = require('./utils');
 
 const poolContract = new ethers.Contract(AaveV3Base.POOL, [
     'function getReservesList() external view returns (address[] memory)'
-], loadBalancer.getNextProvider());
+], provider);
 
 /**
  * Fetches the list of all reservable assets from the Aave V3 Pool.

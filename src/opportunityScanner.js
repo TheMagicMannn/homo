@@ -6,6 +6,7 @@ const { log, withErrorHandling } = require('./utils');
 const aggregatorService = require('./aggregatorService');
 const dexService = require('./dexService');
 const { calculateNetProfit, isProfitable, simulateTransaction, estimateGasCost } = require('./profitCalculator');
+const provider = require('./provider');
 
 /**
  * Gets the best quote for a single hop from all available DEXs and aggregators.
@@ -96,7 +97,7 @@ async function evaluatePath(path, initialAmount, tokenDatabase) {
     const finalAmount = currentAmount;
     const contract = new ethers.Contract(config.contractAddress.base, [
         'function executeArb(address[] calldata tokens, Hop[] calldata hops, uint256 amount)',
-    ]);
+    ], provider);
     const tx = await contract.populateTransaction.executeArb(tokens, executedHops, initialAmount);
     const gasEstimate = await estimateGasCost(tx);
 
