@@ -21,6 +21,10 @@
     "blockExplorer": "https://basescan.org"
   },
   "dexAddresses": {
+    "uniswapV2": {
+      "router": "0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24",
+      "factory": "0x8909dc15e40173ff4699343b6eb8132c65e18ec6"
+    },
     "uniswapV3": {
       "swapRouter02": "0x2626664c2603336E57B271c5C0b26F421741e481",
       "quoterV2": "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a",
@@ -31,14 +35,22 @@
       "defaultFactory": "0x420DD381b31aEf6683db6B902084cB0FFECe40Da"
     },
     "pancakeswapV3": {
-      "smartRouter": "0x678Aa4bF4E210cf2166753e054d5b7c31cc7fa86"
+      "smartRouter": "0x678Aa4bF4E210cf2166753e054d5b7c31cc7fa86",
+      "quoterV2": "0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997"
+    },
+    "sushiswapV3": {
+      "routeProcessor4": "0x709421b58bdcb399c82ef748d76861dc476b7fc7"
+    },
+    "baseswap": {
+      "router": "0x327Df1E6de05895d2ab08513aaDD9313Fe505d86"
     },
     "odos": {
       "routerV2": "0x19cEeAd7105607Cd444F5ad10dd51356436095a1"
     }
   },
   "aave": {
-    "poolAddressesProvider": "0xe20fCBdBfFC4Dd138cE8b2E6FBb6CB49777ad64D"
+    "poolAddressesProvider": "0xe20fCBdBfFC4Dd138cE8b2E6FBb6CB49777ad64D",
+    "pool": "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5"
   },
   "commonTokens": {
     "WETH": "0x4200000000000000000000000000000000000006",
@@ -47,5 +59,12 @@
     "DAI": "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
     "cbETH": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
     "AERO": "0x940181a94A35A4569E4529A3CDfB74e38FD98631"
-  }
+  },
+  "dexScreenerIds": [
+    "aerodrome",
+    "uniswap",
+    "pancakeswap",
+    "sushiswap",
+    "baseswap"
+  ]
 }
