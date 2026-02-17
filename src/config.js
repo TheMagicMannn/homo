@@ -2,7 +2,6 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 
-// Load and validate the configuration
 function loadConfig() {
     const configPath = path.join(__dirname, '../config/config.json');
     if (!fs.existsSync(configPath)) {
@@ -10,10 +9,9 @@ function loadConfig() {
     }
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
-    // Environment variables
     const privateKey = process.env.PRIVATE_KEY;
-    if (!privateKey) {
-        throw new Error('PRIVATE_KEY is not set in the .env file.');
+    if (!privateKey || privateKey === 'YOUR_WALLET_PRIVATE_KEY_HERE') {
+        console.warn('[CONFIG] WARNING: PRIVATE_KEY not set. Bot will run in read-only/scan mode.');
     }
 
     const network = process.env.NETWORK || 'base';
@@ -22,26 +20,27 @@ function loadConfig() {
     }
 
     const rpcUrls = network === 'base'
-        ? (process.env.BASE_RPC_URLS ? process.env.BASE_RPC_URLS.split(',') : [])
+        ? (process.env.BASE_RPC_URLS ? process.env.BASE_RPC_URLS.split(',').map(u => u.trim()).filter(Boolean) : [])
         : [process.env.BASE_SEPOLIA_RPC_URL];
 
     if (!rpcUrls || rpcUrls.length === 0 || !rpcUrls[0]) {
         throw new Error(`RPC URLs for ${network} are not set in the .env file.`);
     }
 
-    // API Keys
-    const dexScreenerApiKey = process.env.DEXSCREENER_API_KEY;
+    const mongoUrl = process.env.MONGO_URL || 'mongodb://localhost:27017';
+    const dbName = process.env.BOT_DB_NAME || 'flashbot_dashboard';
 
-    // Merge and export the final configuration object
     return {
         ...config,
         network,
         rpcUrls,
+        mongoUrl,
+        dbName,
         auth: {
-            privateKey,
+            privateKey: privateKey || '',
         },
         apiKeys: {
-            dexScreener: dexScreenerApiKey,
+            dexScreener: process.env.DEXSCREENER_API_KEY,
         },
     };
 }
