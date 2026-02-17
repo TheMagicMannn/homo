@@ -1,24 +1,36 @@
 require('dotenv').config();
 require("@nomicfoundation/hardhat-toolbox");
 
-const baseRpcUrls = process.env.BASE_RPC_URLS;
-if (!baseRpcUrls) {
-  throw new Error("BASE_RPC_URLS environment variable is not set. Please create a .env file and set it.");
-}
-const firstRpcUrl = baseRpcUrls.split(',')[0];
+const baseRpcUrls = process.env.BASE_RPC_URLS || '';
+const firstRpcUrl = baseRpcUrls.split(',')[0] || 'https://mainnet.base.org';
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
-  solidity: "0.8.24",
+  solidity: {
+    version: "0.8.24",
+    settings: {
+      optimizer: {
+        enabled: true,
+        runs: 200,
+      },
+    },
+  },
   networks: {
     hardhat: {},
     base: {
       url: firstRpcUrl,
-      accounts: process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : [],
+      accounts: process.env.PRIVATE_KEY && process.env.PRIVATE_KEY !== 'YOUR_WALLET_PRIVATE_KEY_HERE'
+        ? [process.env.PRIVATE_KEY]
+        : [],
+      chainId: 8453,
+      gasPrice: 'auto',
     },
     baseSepolia: {
-      url: process.env.BASE_SEPOLIA_RPC_URL || "",
-      accounts: process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : [],
+      url: process.env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org",
+      accounts: process.env.PRIVATE_KEY && process.env.PRIVATE_KEY !== 'YOUR_WALLET_PRIVATE_KEY_HERE'
+        ? [process.env.PRIVATE_KEY]
+        : [],
+      chainId: 84532,
     },
   },
 };
