@@ -1,93 +1,89 @@
 const { ethers } = require('ethers');
 const config = require('./config');
 const { log, withErrorHandling } = require('./utils');
-const { isHighConviction } = require('./zScoreEngine');
 const provider = require('./provider');
 
-const AAVE_PREMIUM = 0.0009; // Aave V3 flash loan premium is 0.09%
+// Aave V3 flash loan premium on Base is 0.05% (5 bps) for most assets
+// Some assets have 0% premium. Using 0.05% as default to be safe.
+const AAVE_PREMIUM_BPS = 5n; // 0.05% = 5 basis points
+const BPS_DENOMINATOR = 10000n;
 
 /**
  * Calculates the net profit of a potential arbitrage trade.
  * @param {BigInt} grossOutput The gross output from the trade.
  * @param {BigInt} borrowedAmount The amount borrowed in the flash loan.
- * @param {BigInt} gasEstimate The estimated gas cost in the hub token.
+ * @param {BigInt} gasEstimate The estimated gas cost in wei.
  * @returns {object} An object containing the net profit and other details.
  */
 function calculateNetProfit(grossOutput, borrowedAmount, gasEstimate) {
-    // Using BigInt for calculations. AAVE_PREMIUM is 0.09%, so we multiply by 9 and divide by 10000.
-    const premium = (borrowedAmount * 9n) / 10000n;
+    // Flash loan premium (0.05%)
+    const premium = (borrowedAmount * AAVE_PREMIUM_BPS) / BPS_DENOMINATOR;
     const repayAmount = borrowedAmount + premium;
 
-    // Adjust for slippage. slippageBuffer is a float like 0.001.
-    const slippageFactor = BigInt(Math.round((1 - config.slippageBuffer) * 10000));
-    const slippageAdjustedOutput = (grossOutput * slippageFactor) / 10000n;
+    // Adjust output for slippage
+    const slippageBps = BigInt(Math.round((config.slippageBuffer || 0.003) * 10000));
+    const slippageAdjustedOutput = grossOutput - (grossOutput * slippageBps) / BPS_DENOMINATOR;
 
+    // Net profit = adjusted output - repay amount - gas cost
     const netProfit = slippageAdjustedOutput - repayAmount - gasEstimate;
 
-    // Calculate profit percentage, scaled by 10000 for precision.
-    const profitPercent = (netProfit * 10000n) / borrowedAmount;
+    // Profit percentage (basis points for precision)
+    const profitBps = borrowedAmount > 0n
+        ? Number((netProfit * BPS_DENOMINATOR) / borrowedAmount)
+        : 0;
 
     return {
         netProfit,
-        profitPercent: Number(profitPercent) / 100, // Convert back to percentage
+        profitPercent: profitBps / 100, // Convert bps to percentage
         repayAmount,
         premium,
+        slippageAdjustedOutput,
     };
 }
 
-
 /**
- * Determines if a trade is profitable based on a dynamic threshold.
- * @param {BigInt} netProfit The net profit of the trade.
- * @param {string} pair The token pair for the Z-score check.
- * @returns {Promise<boolean>} True if the trade is profitable, false otherwise.
+ * Determines if a trade is profitable based on configured threshold.
  */
 async function isProfitable(netProfit, pair) {
-    let threshold = ethers.parseUnits(config.profitThreshold.toString(), 'ether');
-
-    if (await isHighConviction(pair)) {
-        // Boost the threshold for high-conviction trades
-        threshold = threshold * 2n; // Example: double the threshold
-        log(`High-conviction opportunity for ${pair}. Applying boosted profit threshold.`);
-    }
-
+    const thresholdEth = config.minProfitThresholdEth || config.profitThreshold || 0.001;
+    const threshold = ethers.parseUnits(thresholdEth.toString(), 'ether');
     return netProfit > threshold;
 }
 
 /**
  * Simulates a transaction off-chain to verify its outcome.
- * @param {string} contractAddress The address of the contract to call.
- * @param {string} calldata The transaction calldata.
- * @returns {Promise<boolean>} True if the simulation is successful, false otherwise.
  */
 async function simulateTransaction(contractAddress, calldata) {
-    log('Simulating transaction off-chain...');
+    log('Simulating transaction...');
     try {
         await provider.call({
             to: contractAddress,
             data: calldata,
         });
-        log('Transaction simulation successful.');
+        log('Simulation passed.');
         return true;
     } catch (error) {
-        log(`Transaction simulation failed: ${error.reason || error.message}`);
+        log(`Simulation failed: ${error.reason || error.message}`);
         return false;
     }
 }
 
 /**
- * Estimates the gas cost of a transaction.
- * @param {ethers.TransactionRequest} tx The transaction object.
- *p- * @returns {Promise<BigInt>} The estimated gas cost in the native token.
+ * Estimates the gas cost of a transaction in wei.
  */
 async function estimateGasCost(tx) {
-    const [gasLimit, feeData] = await Promise.all([
-        provider.estimateGas(tx),
-        provider.getFeeData()
-    ]);
-    return gasLimit * feeData.gasPrice;
+    try {
+        const [gasLimit, feeData] = await Promise.all([
+            provider.estimateGas(tx),
+            provider.getFeeData()
+        ]);
+        const gasPrice = feeData.maxFeePerGas || feeData.gasPrice || 0n;
+        return gasLimit * gasPrice;
+    } catch (error) {
+        // Return a conservative default if estimation fails
+        return ethers.parseUnits('0.0005', 'ether');
+    }
 }
-
 
 module.exports = {
     calculateNetProfit,

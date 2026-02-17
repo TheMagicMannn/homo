@@ -2,34 +2,33 @@ const axios = require('axios');
 const config = require('./config');
 const { log, withErrorHandling } = require('./utils');
 const dexAggregators = require('./utils/dexAggregators');
-const { wallet } = require('./wallet');
+
+// ============================================================
+// ODOS - Top DEX Aggregator on Base Chain
+// Covers: Uniswap V3, Aerodrome, PancakeSwap, SushiSwap,
+//         BaseSwap, Maverick, Curve, Balancer, and 50+ more
+// ============================================================
 
 const odosApi = axios.create({
-    baseURL: config.aggregatorUrls.odos,
+    baseURL: config.aggregatorUrls?.odos || 'https://api.odos.xyz/',
+    timeout: 10000,
 });
 
-const { TradingSdk, SupportedChainId } = require('@cowprotocol/cow-sdk');
-
-const cowSdk = new TradingSdk({
-    chainId: SupportedChainId.BASE,
-    // Add other necessary config for the SDK
-});
+const ODOS_ROUTER_V2 = config.dexAddresses?.odos?.routerV2 || '0x19cEeAd7105607Cd444F5ad10dd51356436095a1';
 
 /**
- * Gets a quote from Odos.
- * @param {string} fromTokenAddress The address of the token to sell.
- * @param {string} toTokenAddress The address of the token to buy.
- * @param {string} amount The amount to sell.
- * @returns {Promise<object>} The quote from Odos.
+ * Gets a quote from Odos DEX aggregator.
+ * This aggregates across ALL Base chain DEXes for best pricing.
  */
 const getOdosQuote = async (fromTokenAddress, toTokenAddress, amount) => {
     await dexAggregators.odos.limiter.acquire();
+
     const quoteRequestBody = {
         chainId: 8453, // Base mainnet
         inputTokens: [
             {
                 tokenAddress: fromTokenAddress,
-                amount: amount
+                amount: amount.toString()
             }
         ],
         outputTokens: [
@@ -38,63 +37,69 @@ const getOdosQuote = async (fromTokenAddress, toTokenAddress, amount) => {
                 proportion: 1
             }
         ],
-        userAddr: '0x0000000000000000000000000000000000000000', // Not used for quoting
-        slippageLimitPercent: config.slippageBuffer * 100,
+        userAddr: config.contractAddress[config.network] || '0x0000000000000000000000000000000000000000',
+        slippageLimitPercent: (config.slippageBuffer || 0.003) * 100,
         referralCode: 0,
         disableRFQs: true,
         compact: true,
     };
+
     try {
-        const response = await odosApi.post('sor/quote/v3', quoteRequestBody);
-        return { aggregator: 'odos', ...response.data };
+        const response = await odosApi.post('sor/quote/v2', quoteRequestBody);
+        if (response.data && response.data.outAmounts && response.data.outAmounts.length > 0) {
+            return {
+                aggregator: 'odos',
+                toTokenAmount: response.data.outAmounts[0],
+                pathId: response.data.pathId,
+                gasEstimate: response.data.gasEstimate,
+                priceImpact: response.data.percentDiff,
+                ...response.data,
+            };
+        }
+        return null;
     } catch (error) {
-        log(`Odos quote failed: ${error.response?.data?.message || error.message}`);
+        log(`Odos quote failed: ${error.response?.data?.detail || error.message}`);
         return null;
     }
 };
 
-
 /**
- * Gets the swap data (assembly) from Odos.
- * @returns {Promise<object>} The assembled transaction data from Odos.
+ * Gets the assembled swap transaction data from Odos.
+ * This returns ready-to-execute calldata for the Odos Router.
  */
 const getOdosAssemble = async (quote) => {
-    await dexAggregators.odos.limiter.acquire();
-    const assembleRequestBody = {
-        userAddr: config.contractAddress[config.network], // The address of our contract
-        pathId: quote.pathId,
-        simulate: true,
-    };
-    try {
-        const response = await odosApi.post('sor/assemble', assembleRequestBody);
-        return response.data;
-    } catch (error) {
-        log(`Odos assemble failed: ${error.response?.data?.message || error.message}`);
+    if (!quote || !quote.pathId) {
+        log('Invalid quote for Odos assemble');
         return null;
     }
-};
 
+    await dexAggregators.odos.limiter.acquire();
 
-/**
- * Gets a quote from CoW Swap.
- * @param {string} fromTokenAddress The address of the token to sell.
- * @param {string} toTokenAddress The address of the token to buy.
- * @param {string} amount The amount to sell.
- * @returns {Promise<object>} The quote from CoW Swap.
- */
-const getCowQuote = async (fromTokenAddress, toTokenAddress, amount) => {
-    await dexAggregators.cowSwap.quoteLimiter.acquire();
+    const contractAddr = config.contractAddress[config.network];
+    if (!contractAddr) {
+        log('Contract address not set. Cannot assemble Odos transaction.');
+        return null;
+    }
+
+    const assembleRequestBody = {
+        userAddr: contractAddr,
+        pathId: quote.pathId,
+        simulate: false,
+    };
+
     try {
-        const quote = await cowSdk.getQuote({
-            sellToken: fromTokenAddress,
-            buyToken: toTokenAddress,
-            amount,
-            kind: 'sell',
-            userAddress: config.contractAddress[config.network],
-        });
-        return { aggregator: 'cowswap', ...quote };
+        const response = await odosApi.post('sor/assemble', assembleRequestBody);
+        if (response.data && response.data.transaction) {
+            return {
+                to: response.data.transaction.to || ODOS_ROUTER_V2,
+                data: response.data.transaction.data,
+                value: response.data.transaction.value || '0',
+                gasLimit: response.data.transaction.gas,
+            };
+        }
+        return null;
     } catch (error) {
-        log(`CoW Swap quote failed: ${error.message}`);
+        log(`Odos assemble failed: ${error.response?.data?.detail || error.message}`);
         return null;
     }
 };
@@ -103,5 +108,5 @@ const getCowQuote = async (fromTokenAddress, toTokenAddress, amount) => {
 module.exports = {
     getOdosQuote: withErrorHandling(getOdosQuote),
     getOdosAssemble: withErrorHandling(getOdosAssemble),
-    getCowQuote: withErrorHandling(getCowQuote),
+    ODOS_ROUTER_V2,
 };
