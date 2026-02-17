@@ -16,18 +16,29 @@ async function main() {
     const contractAddress = await baseAlphaArb.getAddress();
     console.log("BaseAlphaArb deployed to:", contractAddress);
 
-    // Whitelist DEX routers on Base
+    // Whitelist ALL DEX routers on Base
     const routers = [
+        "0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24", // Uniswap V2 Router
         "0x2626664c2603336E57B271c5C0b26F421741e481", // Uniswap V3 SwapRouter02
         "0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43", // Aerodrome Router
         "0x678Aa4bF4E210cf2166753e054d5b7c31cc7fa86", // PancakeSwap V3 SmartRouter
+        "0x709421b58bdcb399c82ef748d76861dc476b7fc7", // SushiSwap V3 RouteProcessor4
+        "0x327Df1E6de05895d2ab08513aaDD9313Fe505d86", // BaseSwap Router
         "0x19cEeAd7105607Cd444F5ad10dd51356436095a1", // Odos Router V2
     ];
 
     console.log("Whitelisting DEX routers...");
     const tx = await baseAlphaArb.setRouterWhitelistBatch(routers, true);
     await tx.wait();
-    console.log("Routers whitelisted:", routers);
+
+    console.log("\n=== Routers Whitelisted ===");
+    console.log("  Uniswap V2:       ", routers[0]);
+    console.log("  Uniswap V3:       ", routers[1]);
+    console.log("  Aerodrome:        ", routers[2]);
+    console.log("  PancakeSwap V3:   ", routers[3]);
+    console.log("  SushiSwap V3 (RP):", routers[4]);
+    console.log("  BaseSwap:         ", routers[5]);
+    console.log("  Odos:             ", routers[6]);
 
     console.log("\n=== Deployment Complete ===");
     console.log("Contract:", contractAddress);
