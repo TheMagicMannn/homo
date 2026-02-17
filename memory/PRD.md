@@ -1,81 +1,49 @@
 # FlashBot - AAVE V3 Flash Loan Arbitrage Bot PRD
 
 ## Original Problem Statement
-Fix the arbitrage bot using AAVE V3 flash loans with DeFi arbitrage strategies to be a fully functional mainnet production version bot on Base chain, with all top Base DEXes and DEX aggregator integration.
+Fix the arbitrage bot using AAVE V3 flash loans with DeFi arbitrage strategies to be a fully functional mainnet production version bot on Base chain.
 
 ## Architecture
 - **Bot Engine**: Node.js (ethers.js v6) in `/app/src/`
-- **Smart Contract**: Solidity 0.8.24 (BaseAlphaArb.sol) using Aave V3 FlashLoanSimpleReceiverBase
-  - Typed DEX interfaces: Uniswap V3 (ISwapRouter02), Aerodrome (IAerodromeRouter), PancakeSwap V3
-  - Generic calldata execution for aggregators (Odos)
-  - SafeERC20, router whitelisting, per-hop balance checks
+- **Smart Contract**: Solidity 0.8.24 (BaseAlphaArb.sol) - Aave V3 FlashLoanSimpleReceiverBase
 - **Dashboard Backend**: Python FastAPI on port 8001
 - **Dashboard Frontend**: React + Tailwind CSS on port 3000
-- **Database**: MongoDB (shared state between bot and dashboard)
+- **Database**: MongoDB
 - **Target Network**: Base Mainnet (Chain ID: 8453)
 
-## User Personas
-- DeFi arbitrage traders operating flash loan bots on Base chain
-- Bot operators monitoring PnL and adjusting risk parameters
+## Configured DEXes (Full Pipeline)
 
-## Core Requirements (Static)
-1. AAVE V3 flash loan integration on Base chain
-2. Multi-hop arbitrage path detection and execution
-3. DEX integration: Uniswap V3, Aerodrome, PancakeSwap V3
-4. DEX Aggregator: Odos (covers 50+ Base DEXes)
-5. Real-time monitoring dashboard
-6. Adjustable risk/gas management settings
+| DEX | Type | Contract Type | Router Address |
+|-----|------|--------------|----------------|
+| Uniswap V2 | V2 AMM | DEX_UNISWAP_V2 (4) | 0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24 |
+| Uniswap V3 | V3 CL | DEX_UNISWAP_V3 (1) | 0x2626664c2603336E57B271c5C0b26F421741e481 |
+| PancakeSwap V3 | V3 CL | DEX_PANCAKESWAP_V3 (3) | 0x678Aa4bF4E210cf2166753e054d5b7c31cc7fa86 |
+| Aerodrome | Velo V2 | DEX_AERODROME (2) | 0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43 |
+| SushiSwap V3 | RouteProcessor4 | DEX_GENERIC (0) | 0x709421b58bdcb399c82ef748d76861dc476b7fc7 |
+| BaseSwap | V2 AMM | DEX_UNISWAP_V2 (4) | 0x327Df1E6de05895d2ab08513aaDD9313Fe505d86 |
+| Odos | Aggregator | DEX_GENERIC (0) | 0x19cEeAd7105607Cd444F5ad10dd51356436095a1 |
+
+## Smart Contract Features
+- Typed DEX interfaces: _swapUniswapV2(), _swapUniswapV3(), _swapAerodrome(), _swapPancakeSwapV3(), _swapGeneric()
+- SafeERC20, router whitelisting, per-hop balance checks, per-hop slippage protection
+- Path connectivity + circular path validation
+- WETH wrap/unwrap, profit withdrawal
+- 13 Hardhat tests (including 4-hop multi-DEX: UniV2 -> UniV3 -> Aero -> Odos)
+
+## Flashblocks Integration
+- 200ms preconfirmations (free, protocol-level)
+- Event-driven scanning on each sub-block
+- Set FLASHBLOCKS_WS_URL in .env to enable
 
 ## What's Been Implemented
-
-### Feb 17, 2026 - Initial Fixes
-- Fixed all DEX contract addresses for Base chain
-- Fixed Uniswap V3 QuoterV2 integration
-- Fixed Aerodrome Router ABI (Route struct)
-- Removed Flashbots (not on Base), CoW Swap (not on Base)
-- Fixed Odos aggregator API endpoints
-- Built monitoring dashboard (React + FastAPI + MongoDB)
-
-### Feb 17, 2026 - Smart Contract Production Rewrite
-- **Typed DEX Interfaces**: Contract natively calls `exactInputSingle()` for Uniswap V3 / PancakeSwap V3, and `swapExactTokensForTokens()` with Route struct for Aerodrome
-- **Generic Calldata**: Supports `router.call(data)` for aggregators like Odos, with return value checking
-- **SafeERC20**: All token operations use `forceApprove()` and `safeTransfer()` for non-standard tokens
-- **Router Whitelisting**: Only pre-approved router addresses can be called (security)
-- **Per-Hop Balance Checks**: Verifies tokenOut balance increased by >= amountOutMin after each step
-- **Per-Hop Slippage Protection**: Each SwapStep has its own amountOutMin
-- **Path Connectivity Validation**: Verifies each step's tokenIn matches previous step's tokenOut
-- **Circular Path Validation**: First step tokenIn and last step tokenOut must match (the borrowed asset)
-- **Events**: SwapExecuted per hop + ArbExecuted at completion
-- **WETH Utilities**: wrap/unwrap functions for native ETH handling
-- **11 Hardhat Tests Passing**: Generic, UniV3, Aerodrome, multi-DEX 3-hop, slippage, whitelist, ownership, connectivity, profitability
-
-### Correct Base Chain Contract Addresses
-- Uniswap V3 SwapRouter02: 0x2626664c2603336E57B271c5C0b26F421741e481
-- Uniswap V3 QuoterV2: 0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a
-- Aerodrome Router: 0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43
-- Aerodrome Factory: 0x420DD381b31aEf6683db6B902084cB0FFECe40Da
-- PancakeSwap V3 SmartRouter: 0x678Aa4bF4E210cf2166753e054d5b7c31cc7fa86
-- Odos Router V2: 0x19cEeAd7105607Cd444F5ad10dd51356436095a1
-- Aave V3 Pool: 0xA238Dd80C259a72e81d7e4664a9801593F98d1c5
-- WETH: 0x4200000000000000000000000000000000000006
+- Feb 17, 2026: Complete bot rewrite with all 7 DEXes configured end-to-end
+- Pair/pool fetching from DexScreener for all DEXes
+- Path generation with multi-hop across all DEX pairs
+- Opportunity scanning queries ALL DEXes in parallel
+- Smart contract executes atomic multi-DEX swaps in single transactions
+- Monitoring dashboard with adjustable settings
 
 ## Prioritized Backlog
-
-### P0 - Before Mainnet
-- [ ] Deploy BaseAlphaArb contract to Base mainnet
-- [ ] Configure real wallet private key and RPC endpoints
-- [ ] Whitelist all DEX routers on deployed contract
-- [ ] Live test with small flash loan amounts
-
-### P1 - Production Hardening
-- [x] Implement Flashblocks (200ms preconfirmations on Base) - DONE
-- [ ] Add WebSocket bot <-> dashboard communication
-- [ ] Add multi-asset flash loan support
-- [ ] Dynamic gas pricing based on Base L1 data costs
-- [ ] Telegram/Discord alerts for profitable trades
-
-### P2 - Optimization
-- [ ] Mempool monitoring for reactive arbitrage
-- [ ] Historical profit charting in dashboard
-- [ ] Backtest mode using historical block data
-- [ ] Portfolio tracking with token balance display
+### P0 - Deploy to mainnet
+### P1 - Telegram alerts, WebSocket dashboard, multi-asset flash loans
+### P2 - Mempool monitoring, historical charting, backtesting
