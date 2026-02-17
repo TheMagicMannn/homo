@@ -4,61 +4,64 @@ const { log, withErrorHandling } = require('./utils');
 const DEXSCREENER_API_URL = 'https://api.dexscreener.com/latest/dex/';
 
 /**
- * Fetches all trading pairs for a given set of DEX addresses from DexScreener.
- * @param {Array<string>} dexIds An array of DEX identifiers (e.g., 'uniswap', 'aerodrome').
- * @returns {Promise<object>} A comprehensive database of tokens and their pairs.
+ * Fetches trading pairs for a set of DEXes on Base from DexScreener.
+ * Builds a comprehensive token database with pair information.
  */
 async function fetchAllPairs(dexIds) {
     const tokenDatabase = {};
-    log(`Fetching all pairs for DEXs: ${dexIds.join(', ')}...`);
+    log(`Fetching pairs for DEXs: ${dexIds.join(', ')}...`);
 
     for (const dexId of dexIds) {
         try {
-            // DexScreener API can be slow, so we'll fetch page by page
-            let page = 1;
-            let hasMore = true;
+            // Use DexScreener search to find pairs on Base
+            const url = `${DEXSCREENER_API_URL}search?q=${encodeURIComponent(dexId + ' base')}`;
+            const response = await axios.get(url, { timeout: 15000 });
+            const pairs = response.data?.pairs || [];
 
-            while (hasMore) {
-                // Corrected endpoint using search functionality
-                const query = `${dexId} pairs on base`;
-                const url = `${DEXSCREENER_API_URL}search?q=${encodeURIComponent(query)}&page=${page}`;
-                const response = await axios.get(url);
-                const { pairs } = response.data;
+            // Filter for Base chain pairs only
+            const basePairs = pairs.filter(p =>
+                p.chainId === 'base' &&
+                p.liquidity?.usd > 10000 // Minimum $10k liquidity
+            );
 
-                if (!pairs || pairs.length === 0) {
-                    hasMore = false;
-                    continue;
-                }
+            log(`Found ${basePairs.length} Base pairs for ${dexId}`);
 
-                log(`Fetched page ${page} with ${pairs.length} pairs for ${dexId}...`);
+            for (const pair of basePairs) {
+                const { baseToken, quoteToken, liquidity, dexId: pairDex } = pair;
+                if (!baseToken || !quoteToken) continue;
 
-                for (const pair of pairs) {
-                    const { baseToken, quoteToken, liquidity } = pair;
-                    if (!baseToken || !quoteToken || !liquidity || !liquidity.usd) continue;
+                const baseAddr = baseToken.address.toLowerCase();
+                const quoteAddr = quoteToken.address.toLowerCase();
 
-                    // Add tokens to the database if they don't exist
-                    [baseToken, quoteToken].forEach(token => {
-                        if (!tokenDatabase[token.address]) {
-                            tokenDatabase[token.address] = {
-                                symbol: token.symbol,
-                                name: token.name,
-                                pairs: {},
-                                liquidity: 0,
-                            };
-                        }
-                    });
+                // Add tokens to database
+                [
+                    [baseAddr, baseToken],
+                    [quoteAddr, quoteToken]
+                ].forEach(([addr, token]) => {
+                    if (!tokenDatabase[addr]) {
+                        tokenDatabase[addr] = {
+                            symbol: token.symbol,
+                            name: token.name,
+                            pairs: {},
+                            liquidity: 0,
+                        };
+                    }
+                });
 
-                    // Add pair information to each token
-                    tokenDatabase[baseToken.address].pairs[quoteToken.address] = { dex: dexId };
-                    tokenDatabase[quoteToken.address].pairs[baseToken.address] = { dex: dexId };
+                // Add pair information (bidirectional)
+                const dexName = pairDex || dexId;
+                tokenDatabase[baseAddr].pairs[quoteAddr] = { dex: dexName };
+                tokenDatabase[quoteAddr].pairs[baseAddr] = { dex: dexName };
 
-                    // Aggregate liquidity
-                    tokenDatabase[baseToken.address].liquidity += liquidity.usd;
-                    tokenDatabase[quoteToken.address].liquidity += liquidity.usd;
-                }
-
-                page++;
+                // Aggregate liquidity
+                const liq = liquidity?.usd || 0;
+                tokenDatabase[baseAddr].liquidity += liq;
+                tokenDatabase[quoteAddr].liquidity += liq;
             }
+
+            // Rate limit between requests
+            await new Promise(r => setTimeout(r, 500));
+
         } catch (error) {
             log(`Failed to fetch pairs for ${dexId}: ${error.message}`);
         }

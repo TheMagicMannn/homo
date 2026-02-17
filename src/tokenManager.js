@@ -4,29 +4,45 @@ const { log, withErrorHandling } = require('./utils');
 
 const dexScreenerApi = axios.create({
     baseURL: 'https://api.dexscreener.com/latest/',
+    timeout: 10000,
 });
 
 let volatileTokens = [];
 
 /**
- * Fetches trending tokens from the DexScreener API.
- * @returns {Promise<Array<object>>} A list of trending tokens.
+ * Fetches trending tokens on Base from DexScreener.
  */
 const fetchTrendingTokens = async () => {
-    log('Fetching trending tokens from DexScreener...');
-    // DexScreener API for new pairs on Base. Adjust the endpoint as needed.
-    const response = await dexScreenerApi.get('dex/search?q=base');
-    const pairs = response.data.pairs;
+    log('Fetching trending Base tokens from DexScreener...');
+    try {
+        const response = await dexScreenerApi.get('dex/search?q=base');
+        const pairs = response.data?.pairs || [];
 
-    // Extract unique tokens from the new pairs
-    const tokenSet = new Set();
-    pairs.forEach(pair => {
-        tokenSet.add({ address: pair.baseToken.address, symbol: pair.baseToken.symbol });
-        tokenSet.add({ address: pair.quoteToken.address, symbol: pair.quoteToken.symbol });
-    });
+        // Filter for Base chain only
+        const basePairs = pairs.filter(p => p.chainId === 'base');
 
-    log(`Found ${tokenSet.size} new tokens.`);
-    return Array.from(tokenSet);
+        const tokenMap = new Map();
+        basePairs.forEach(pair => {
+            if (pair.baseToken) {
+                tokenMap.set(pair.baseToken.address.toLowerCase(), {
+                    address: pair.baseToken.address.toLowerCase(),
+                    symbol: pair.baseToken.symbol,
+                });
+            }
+            if (pair.quoteToken) {
+                tokenMap.set(pair.quoteToken.address.toLowerCase(), {
+                    address: pair.quoteToken.address.toLowerCase(),
+                    symbol: pair.quoteToken.symbol,
+                });
+            }
+        });
+
+        log(`Found ${tokenMap.size} trending tokens on Base.`);
+        return Array.from(tokenMap.values());
+    } catch (error) {
+        log(`Failed to fetch trending tokens: ${error.message}`);
+        return [];
+    }
 };
 
 /**
@@ -34,59 +50,40 @@ const fetchTrendingTokens = async () => {
  */
 const updateVolatileList = async () => {
     const newTokens = await fetchTrendingTokens();
-    if (newTokens) {
-        // Simple replacement for now. More sophisticated logic could be used here.
+    if (newTokens && newTokens.length > 0) {
         volatileTokens = newTokens;
-        log('Volatile token list updated.');
+        log(`Volatile token list updated: ${volatileTokens.length} tokens`);
     }
 };
 
-/**
- * Gets the current list of volatile tokens.
- * @returns {Array<object>} The list of volatile tokens.
- */
-const getVolatileTokens = () => {
-    return volatileTokens;
-};
+const getVolatileTokens = () => volatileTokens;
 
-/**
- * Gets a token address from a symbol.
- * Note: This is a simple implementation and may not be robust enough for production.
- * @param {string} symbol The token symbol.
- * @returns {string|null} The token address or null if not found.
- */
 const getTokenAddress = (symbol) => {
+    // Check config common tokens first
+    if (config.commonTokens) {
+        const addr = config.commonTokens[symbol.toUpperCase()];
+        if (addr) return addr.toLowerCase();
+    }
     const token = volatileTokens.find(t => t.symbol.toLowerCase() === symbol.toLowerCase());
     return token ? token.address : null;
 };
 
 /**
  * Gets the pair address for two token symbols from DexScreener.
- * @param {string} token0Symbol The symbol of the first token.
- * @param {string} token1Symbol The symbol of the second token.
- * @returns {string|null} The pair address or null if not found.
  */
 const getPairAddress = async (token0Symbol, token1Symbol) => {
     try {
-        const query = `${token0Symbol} ${token1Symbol}`;
-        const response = await dexScreenerApi.get(`pairs/search?q=${query}`);
-        const pairs = response.data.pairs;
-        if (pairs && pairs.length > 0) {
-            // This is a simplified approach. A more robust implementation would handle multiple results.
-            return pairs[0].pairAddress;
-        }
+        const query = `${token0Symbol} ${token1Symbol} base`;
+        const response = await dexScreenerApi.get(`dex/search?q=${encodeURIComponent(query)}`);
+        const pairs = response.data?.pairs || [];
+        const basePair = pairs.find(p => p.chainId === 'base');
+        if (basePair) return basePair.pairAddress;
         return null;
     } catch (error) {
         log(`Failed to get pair address for ${token0Symbol}/${token1Symbol}: ${error.message}`);
         return null;
     }
 };
-
-// Periodically update the volatile token list
-setInterval(updateVolatileList, 30 * 60 * 1000); // Update every 30 minutes
-
-// Initial update
-updateVolatileList();
 
 module.exports = {
     fetchTrendingTokens: withErrorHandling(fetchTrendingTokens),

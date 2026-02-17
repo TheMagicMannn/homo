@@ -8,66 +8,125 @@ const { getFlashLoanableAssets } = require('./aaveService');
 const { fetchAllPairs } = require('./dexScreenerService');
 const { generateAndCachePaths } = require('./pathGenerator');
 const { scanAllPaths } = require('./opportunityScanner');
-const aggregatorService = require('./aggregatorService');
 const { sendPrivateTransaction } = require('./mevProtection');
 
-const POLLING_INTERVAL = 4000; // 4 seconds
+const SCAN_INTERVAL = config.scanIntervalMs || 4000;
+let scanCount = 0;
+let isRunning = false;
 
 /**
  * Handles a profitable opportunity by preparing and executing the transaction.
- * @param {object} opportunity The profitable opportunity.
  */
 async function handleOpportunity(opportunity) {
-    log(`Handling multi-hop opportunity with profit: ${opportunity.netProfit.toString()}`);
+    log(`=== EXECUTING OPPORTUNITY ===`);
+    log(`Path: ${opportunity.pathDescription || 'multi-hop'}`);
+    log(`Estimated profit: ${ethers.formatUnits(opportunity.netProfit, 18)} ETH`);
 
     const { tokens, hops, initialAmount } = opportunity;
 
     if (!tokens || !hops || !initialAmount) {
         log('Invalid opportunity data.');
-        return;
+        return null;
     }
 
-    // Prepare the transaction for our smart contract
     const contractAddress = config.contractAddress[config.network];
-    const contract = new ethers.Contract(contractAddress, [
-        'function executeArb(address[] calldata tokens, Hop[] calldata hops, uint256 amount)',
-    ], wallet);
-
-    const tx = await contract.populateTransaction.executeArb(
-        tokens,
-        hops,
-        initialAmount
-    );
-
-    // Add a buffer to the gas limit, can be estimated more accurately
-    tx.gasLimit = (await wallet.provider.estimateGas(tx)) * 12n / 10n;
-
-    log('Sending transaction...');
-    const txResponse = await sendPrivateTransaction(tx);
-
-    if (txResponse) {
-        log(`Transaction sent: ${txResponse.hash}`);
-        await txResponse.wait();
-        log('Transaction confirmed!');
+    if (!contractAddress) {
+        log('ERROR: Contract address not set. Cannot execute trade.');
+        return null;
     }
-}
 
+    try {
+        // Build the transaction calldata
+        const ABI = [
+            'function executeArb(address[] calldata tokens, tuple(address target, bytes data)[] calldata hops, uint256 amount)'
+        ];
+        const contract = new ethers.Contract(contractAddress, ABI, wallet);
+
+        const tx = await contract.executeArb.populateTransaction(
+            tokens,
+            hops,
+            initialAmount
+        );
+
+        // Estimate gas with safety buffer
+        try {
+            const gasEstimate = await wallet.provider.estimateGas({
+                ...tx,
+                from: wallet.address,
+            });
+            tx.gasLimit = (gasEstimate * 130n) / 100n;
+        } catch (gasError) {
+            log(`Gas estimation failed: ${gasError.message}. Using safe default.`);
+            tx.gasLimit = 500000n;
+        }
+
+        log('Sending transaction...');
+        const txResponse = await sendPrivateTransaction(tx);
+
+        if (txResponse) {
+            log(`TX Hash: ${txResponse.hash}`);
+            log('Waiting for confirmation...');
+
+            const receipt = await txResponse.wait(1); // Wait for 1 confirmation
+            if (receipt && receipt.status === 1) {
+                log(`CONFIRMED in block ${receipt.blockNumber}!`);
+                log(`Gas used: ${receipt.gasUsed.toString()}`);
+                return {
+                    success: true,
+                    txHash: txResponse.hash,
+                    blockNumber: receipt.blockNumber,
+                    gasUsed: receipt.gasUsed.toString(),
+                };
+            } else {
+                log('Transaction REVERTED on-chain.');
+                return { success: false, txHash: txResponse.hash, reason: 'reverted' };
+            }
+        }
+    } catch (error) {
+        log(`Execution error: ${error.message}`);
+        return { success: false, reason: error.message };
+    }
+
+    return null;
+}
 
 /**
  * The main scanning loop.
- * @param {Array<Array<object>>} paths The array of arbitrage paths to scan.
- * @param {object} tokenDatabase The token database for symbol lookups.
  */
 async function startScanning(paths, tokenDatabase) {
-    log('Starting scanner...');
-    while (true) {
-        const opportunities = await scanAllPaths(paths, tokenDatabase);
-        if (opportunities && opportunities.length > 0) {
-            // Sort by net profit and handle the best one
-            opportunities.sort((a, b) => b.netProfit - a.netProfit);
-            await handleOpportunity(opportunities[0]);
+    log(`Starting scanner with ${paths.length} paths...`);
+    isRunning = true;
+
+    while (isRunning) {
+        scanCount++;
+        log(`--- Scan #${scanCount} ---`);
+
+        try {
+            const opportunities = await scanAllPaths(paths, tokenDatabase);
+
+            if (opportunities && opportunities.length > 0) {
+                // Sort by net profit descending
+                opportunities.sort((a, b) => {
+                    const profitA = BigInt(a.netProfit?.toString() || '0');
+                    const profitB = BigInt(b.netProfit?.toString() || '0');
+                    return profitB > profitA ? 1 : profitB < profitA ? -1 : 0;
+                });
+
+                log(`Found ${opportunities.length} profitable opportunities. Best: ${opportunities[0].pathDescription}`);
+
+                // Execute the best opportunity
+                const result = await handleOpportunity(opportunities[0]);
+                if (result?.success) {
+                    log(`Trade successful! TX: ${result.txHash}`);
+                }
+            } else {
+                log('No profitable opportunities found this scan.');
+            }
+        } catch (error) {
+            log(`Scan error: ${error.message}`);
         }
-        await sleep(POLLING_INTERVAL);
+
+        await sleep(SCAN_INTERVAL);
     }
 }
 
@@ -75,10 +134,33 @@ async function startScanning(paths, tokenDatabase) {
  * The main entry point for the bot.
  */
 async function main() {
-    log('Starting BaseAlphaBot...');
+    log('==========================================');
+    log('  BaseAlphaBot - AAVE V3 Flash Loan Arb');
+    log('  Network: Base Mainnet (Chain ID: 8453)');
+    log('==========================================');
 
-    // Fetch dynamic assets and add them to the config
+    // Check wallet configuration
+    if (!config.auth.privateKey || config.auth.privateKey === 'YOUR_WALLET_PRIVATE_KEY_HERE') {
+        log('WARNING: No private key configured. Running in SCAN-ONLY mode.');
+        log('Set PRIVATE_KEY in .env to enable trade execution.');
+    } else {
+        log(`Wallet: ${wallet.address}`);
+        try {
+            const balance = await wallet.provider.getBalance(wallet.address);
+            log(`Balance: ${ethers.formatEther(balance)} ETH`);
+        } catch (e) {
+            log('Could not fetch wallet balance.');
+        }
+    }
+
+    // Fetch flash loanable assets from Aave V3
+    log('Fetching Aave V3 flash loanable assets...');
     config.hubAssets = await getFlashLoanableAssets();
+    if (!config.hubAssets || config.hubAssets.length === 0) {
+        log('WARNING: No flash loanable assets found. Using common tokens as fallback.');
+        config.hubAssets = Object.values(config.commonTokens || {});
+    }
+    log(`Hub assets: ${config.hubAssets.length}`);
 
     // Build the token and pair database
     const tokenDbPath = path.join(__dirname, '../config/tokenDatabase.json');
@@ -86,13 +168,18 @@ async function main() {
     try {
         const dbData = await fs.readFile(tokenDbPath, 'utf-8');
         tokenDatabase = JSON.parse(dbData);
-        log('Token database loaded from file.');
+        log(`Token database loaded: ${Object.keys(tokenDatabase).length} tokens`);
     } catch (error) {
-        log('Token database not found or invalid. Building it now...');
-        const dexIds = ['uniswap', 'aerodrome', 'pancakeswap'];
+        log('Building token database from DexScreener...');
+        const dexIds = ['aerodrome', 'uniswap', 'pancakeswap'];
         tokenDatabase = await fetchAllPairs(dexIds);
-        await fs.writeFile(tokenDbPath, JSON.stringify(tokenDatabase, null, 2));
-        log(`Token database saved to ${tokenDbPath}`);
+        if (tokenDatabase && Object.keys(tokenDatabase).length > 0) {
+            await fs.writeFile(tokenDbPath, JSON.stringify(tokenDatabase, null, 2));
+            log(`Token database saved: ${Object.keys(tokenDatabase).length} tokens`);
+        } else {
+            log('ERROR: Failed to build token database.');
+            return;
+        }
     }
 
     // Generate and cache arbitrage paths
@@ -100,45 +187,55 @@ async function main() {
     let needsUpdate = true;
     try {
         const stats = await fs.stat(pathsPath);
-        const twoDaysAgo = Date.now() - 2 * 24 * 60 * 60 * 1000;
-        if (stats.mtime.getTime() > twoDaysAgo) {
+        const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+        if (stats.mtime.getTime() > oneDayAgo) {
             needsUpdate = false;
         }
     } catch (error) {
-        // File doesn't exist, so we definitely need to update
+        // File doesn't exist
     }
 
     if (needsUpdate) {
-        log('Arbitrage paths are outdated or missing. Regenerating...');
+        log('Generating arbitrage paths...');
         await generateAndCachePaths(config, tokenDatabase);
     } else {
         log('Arbitrage paths are up to date.');
     }
 
     // Load the generated paths
-    const pathsData = await fs.readFile(pathsPath, 'utf-8');
-    const paths = JSON.parse(pathsData);
+    let paths;
+    try {
+        const pathsData = await fs.readFile(pathsPath, 'utf-8');
+        paths = JSON.parse(pathsData);
+    } catch (error) {
+        log('ERROR: Could not load arbitrage paths.');
+        return;
+    }
 
     log(`Loaded ${paths.length} arbitrage paths.`);
 
-    // Graceful shutdown handling
-    process.on('SIGINT', () => {
-        log('Shutting down...');
-        process.exit();
-    });
+    // Contract address check
+    if (!config.contractAddress[config.network]) {
+        log('WARNING: Contract not deployed. Deploy with: npx hardhat run scripts/deploy.js --network base');
+    }
 
-    process.on('SIGTERM', () => {
-        log('Shutting down...');
+    // Graceful shutdown
+    const shutdown = () => {
+        log('Shutting down gracefully...');
+        isRunning = false;
         process.exit();
-    });
+    };
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
 
+    // Start the scanning loop
     try {
         await startScanning(paths, tokenDatabase);
     } catch (error) {
-        log(`An unexpected error occurred in the main loop: ${error.message}`);
+        log(`Fatal error: ${error.message}`);
         log('Restarting in 10 seconds...');
         await sleep(10000);
-        main(); // Restart the bot
+        main();
     }
 }
 
