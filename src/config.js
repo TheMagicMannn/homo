@@ -30,12 +30,17 @@ function loadConfig() {
     const mongoUrl = process.env.MONGO_URL || 'mongodb://localhost:27017';
     const dbName = process.env.BOT_DB_NAME || 'flashbot_dashboard';
 
+    // Flashblocks WebSocket URL (optional, for 200ms preconfirmations)
+    // Get from QuickNode, Alchemy, or Chainstack (Flashblocks-enabled endpoint)
+    const flashblocksWsUrl = process.env.FLASHBLOCKS_WS_URL || '';
+
     return {
         ...config,
         network,
         rpcUrls,
         mongoUrl,
         dbName,
+        flashblocksWsUrl,
         auth: {
             privateKey: privateKey || '',
         },
